@@ -1,4 +1,3 @@
-// src/renderer/GameRenderer.ts
 import * as PIXI from 'pixi.js';
 import { BattleSimulator } from '../game/engine/simulator';
 import { BASE_STATS } from '../game/entities/shapes_dictionary';
@@ -13,38 +12,58 @@ export class GameRenderer {
   }
 
   async init(container: HTMLElement) {
-    await this.app.init({ width: 800, height: 600, backgroundColor: 0x1a1a2e });
+    await this.app.init({ resizeTo: window, backgroundColor: 0x0d0d1a });
     container.appendChild(this.app.canvas);
     this.startBattle();
   }
 
   private startBattle() {
+    const cx = this.app.screen.width;
+    const cy = this.app.screen.height;
+
+    // Arena bounds — fixed 16:10 ratio, centered on screen
+    const arenaW = Math.min(cx * 0.8, 900);
+    const arenaH = arenaW * 0.625;
+    const arenaX = (cx - arenaW) / 2;
+    const arenaY = (cy - arenaH) / 2;
+
+    // Shape positions relative to arena
+    const triX = arenaX + arenaW * 0.25;
+    const sqX  = arenaX + arenaW * 0.75;
+    const midY = arenaY + arenaH * 0.5;
+
+    // Temp arena border
+    const border = new PIXI.Graphics();
+    border.rect(arenaX, arenaY, arenaW, arenaH).stroke({ width: 2, color: 0x334466 });
+
     const triangleState = {
       id: 'tri', type: 'triangle' as const,
       stats: BASE_STATS.triangle,
       currentHp: BASE_STATS.triangle.hp,
-      position: { x: 200, y: 300 },
+      position: { x: triX, y: midY },
       isStunned: false,
     };
     const squareState = {
       id: 'sq', type: 'square' as const,
       stats: BASE_STATS.square,
       currentHp: BASE_STATS.square.hp,
-      position: { x: 600, y: 300 },
+      position: { x: sqX, y: midY },
       isStunned: false,
     };
 
     const simulator = new BattleSimulator(triangleState, squareState, Date.now());
     const triSprite = new ShapeSprite(triangleState);
-    const sqSprite = new ShapeSprite(squareState);
-    const hud = new HUD();
+    const sqSprite  = new ShapeSprite(squareState);
+    const hud = new HUD(arenaX, arenaY, arenaW, arenaH, () => {
+    // Phase 2 will put ticker start logic here
+    });
 
-    this.app.stage.addChild(triSprite.container, sqSprite.container, hud.container);
+    this.app.stage.addChild(border, triSprite.container, sqSprite.container, hud.container);
 
     this.app.ticker.add(() => {
       const state = simulator.update();
       const tri = state.shapes.find(s => s.id === 'tri')!;
-      const sq = state.shapes.find(s => s.id === 'sq')!;
+      const sq  = state.shapes.find(s => s.id === 'sq')!;
 
       hud.update(tri.currentHp, tri.stats.hp, sq.currentHp, sq.stats.hp, state.status);
 
