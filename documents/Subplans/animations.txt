@@ -1,0 +1,94 @@
+Context
+The battle renderer currently displays static shapes. The simulator fires attack and damage events every tick but GameRenderer never reads state.events, and ShapeSprite.update() is never called. This plan wires those events into a time-based animation system so shapes lunge on attack and flash/shake on hit — pure visual layer, zero changes to game logic.
+
+Critical Files
+
+src/renderer/ShapeSprite.ts — add animation state machine (major changes)
+src/renderer/GameRenderer.ts — wire events → sprite triggers, call tick() each frame
+
+
+ShapeSprite.ts Changes
+New fields
+tsprivate baseX: number;
+private baseY: number;
+private opponentBaseX: number = 0;
+
+// Animation timers (0 = idle, counts down to 0)
+private lungeT: number = 0;
+private flashT: number = 0;
+private shakeT: number = 0;
+private flashColor: number = 0xffffff;
+New constants (tune these)
+tsconst LUNGE_DIST = 50;       // px toward opponent at peak
+const LUNGE_FRAMES = 14;     // total frames for full lunge cycle
+const FLASH_FRAMES = 10;     // frames the hit flash lasts
+const SHAKE_DIST = 12;       // px of knockback at peak
+const SHAKE_FRAMES = 8;      // frames the shake lasts
+New public methods
+setOpponentX(x: number) — called once by GameRenderer after both sprites are created.
+triggerAttack() — starts lunge. Only triggers if not already lunging (lungeT === 0).
+tstriggerAttack(): void {
+  this.lungeT = LUNGE_FRAMES;
+}
+triggerHit(isCrit: boolean) — starts flash + shake. Always resets (crit can interrupt normal).
+tstriggerHit(isCrit: boolean): void {
+  this.flashT = FLASH_FRAMES;
+  this.shakeT = SHAKE_FRAMES;
+  this.flashColor = isCrit ? 0xff6600 : 0xffffff;
+}
+tick(delta: number) — called every renderer frame. Advances all timers and applies transforms.
+
+Advance each timer: timer = Math.max(0, timer - delta)
+Lunge offset (x-axis only, toward opponentBaseX):
+
+Normalize progress p = lungeT / LUNGE_FRAMES (1=just started → 0=done)
+Two-phase ease: p > 0.6 → forward phase (ease-out), p ≤ 0.6 → return phase (ease-in)
+Peak at p=0.6, smooth using Math.sin(p * Math.PI) mapped to [0, LUNGE_DIST]
+Direction: Math.sign(opponentBaseX - baseX)
+
+
+Flash tint:
+
+While flashT > 0: container.tint = flashColor
+When flashT === 0: container.tint = 0xffffff (PixiJS tint of white = no tint)
+
+
+Shake offset (x-axis, away from opponent):
+
+Math.sin((shakeT / SHAKE_FRAMES) * Math.PI) * SHAKE_DIST * -direction
+
+
+Apply final: container.x = baseX + lungeOffset + shakeOffset
+
+
+GameRenderer.ts Changes
+After creating both sprites (in startBattle)
+tstriSprite.setOpponentX(sqBaseX);   // sqBaseX = 75% arena width
+sqSprite.setOpponentX(triBaseX);   // triBaseX = 25% arena width
+In the ticker loop (runBattle)
+Add event consumption after simulator.update():
+tsfor (const event of state.events) {
+  if (event.type === 'attack') {
+    const sprite = event.attackerId === triState.id ? triSprite : sqSprite;
+    sprite.triggerAttack();
+  }
+  if (event.type === 'damage') {
+    const sprite = event.targetId === triState.id ? triSprite : sqSprite;
+    sprite.triggerHit(event.isCrit);
+  }
+}
+Call tick on both sprites (after event loop, every frame):
+tstriSprite.tick(ticker.deltaTime);
+sqSprite.tick(ticker.deltaTime);
+
+Animation Feel Summary
+EffectTriggerDurationVisualLungeattack event~230msShape slides toward opponent then snaps back — sinusoidal arcFlash (normal hit)damage event~166msShape tints bright white, fadesFlash (crit hit)damage + isCrit~166msShape tints orange (0xff6600)Shake/knockbackdamage event~133msShape oscillates backward
+
+Verification
+
+npm run dev → open browser
+Click FIGHT
+Shapes should lunge toward each other when they attack
+Hit shapes should flash white (normal) or orange (crit) and briefly shake backward
+Battle result and HP values still work correctly (no logic touched)
+No console errors

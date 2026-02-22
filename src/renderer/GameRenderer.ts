@@ -16,8 +16,6 @@ export class GameRenderer {
     await this.app.init({ resizeTo: window, backgroundColor: 0x0d0d1a });
     container.appendChild(this.app.canvas);
 
-    // App ticker is always running — it's just the render loop.
-    // Battle logic gets its own ticker, created on demand.
     this.startBattle();
   }
 
@@ -25,18 +23,15 @@ export class GameRenderer {
     const cx = this.app.screen.width;
     const cy = this.app.screen.height;
 
-    // Arena bounds — fixed 16:10 ratio, centered on screen
     const arenaW = Math.min(cx * 0.8, 900);
     const arenaH = arenaW * 0.625;
     const arenaX = (cx - arenaW) / 2;
     const arenaY = (cy - arenaH) / 2;
 
-    // Shape positions relative to arena
     const triX = arenaX + arenaW * 0.25;
     const sqX  = arenaX + arenaW * 0.75;
     const midY = arenaY + arenaH * 0.5;
 
-    // Temp arena border
     const border = new PIXI.Graphics();
     border.rect(arenaX, arenaY, arenaW, arenaH).stroke({ width: 2, color: 0x334466 });
 
@@ -59,30 +54,28 @@ export class GameRenderer {
     const triSprite = new ShapeSprite(triangleState);
     const sqSprite  = new ShapeSprite(squareState);
 
+    // Wire up opponent positions for lunge direction
+    triSprite.setOpponentX(sqX);
+    sqSprite.setOpponentX(triX);
+
     const hud = new HUD(arenaX, arenaY, arenaW, arenaH, () => {
       this.runBattle(simulator, triSprite, sqSprite, hud);
     });
 
     this.app.stage.addChild(border, triSprite.container, sqSprite.container, hud.container);
 
-    // Paint first frame so HP shows before the fight starts
-    const state = simulator.getState();  // read-only peek, no tick advance
+    const state = simulator.getState();
     const tri = state.shapes.find(s => s.id === 'tri')!;
     const sq  = state.shapes.find(s => s.id === 'sq')!;
     hud.update(tri.currentHp, tri.stats.hp, sq.currentHp, sq.stats.hp, state.status);
   }
 
-  /**
-   * Creates a dedicated battle ticker. Runs independently of the app render loop.
-   * Starts when FIGHT is pressed, stops itself when the battle ends.
-   */
   private runBattle(
     simulator: BattleSimulator,
     triSprite: ShapeSprite,
     sqSprite: ShapeSprite,
     hud: HUD
   ) {
-    // Safety: if a battle ticker already exists, destroy it first
     if (this.battleTicker) {
       this.battleTicker.destroy();
       this.battleTicker = null;
@@ -90,11 +83,27 @@ export class GameRenderer {
 
     this.battleTicker = new PIXI.Ticker();
 
-    this.battleTicker.add(() => {
+    this.battleTicker.add((ticker) => {
       const state = simulator.update();
       const tri = state.shapes.find(s => s.id === 'tri')!;
       const sq  = state.shapes.find(s => s.id === 'sq')!;
       hud.update(tri.currentHp, tri.stats.hp, sq.currentHp, sq.stats.hp, state.status);
+
+      // Consume events → trigger sprite animations
+      for (const event of state.events) {
+        if (event.type === 'attack') {
+          const sprite = event.attackerId === 'tri' ? triSprite : sqSprite;
+          sprite.triggerAttack();
+        }
+        if (event.type === 'damage') {
+          const sprite = event.targetId === 'tri' ? triSprite : sqSprite;
+          sprite.triggerHit(event.isCrit);
+        }
+      }
+
+      // Advance animation timers every frame
+      triSprite.tick(ticker.deltaTime);
+      sqSprite.tick(ticker.deltaTime);
 
       if (state.status !== 'running') {
         this.battleTicker!.stop();
