@@ -6,6 +6,7 @@ import { HUD } from './HUD';
 
 export class GameRenderer {
   private app: PIXI.Application;
+  private battleTicker: PIXI.Ticker | null = null;
 
   constructor() {
     this.app = new PIXI.Application();
@@ -14,6 +15,9 @@ export class GameRenderer {
   async init(container: HTMLElement) {
     await this.app.init({ resizeTo: window, backgroundColor: 0x0d0d1a });
     container.appendChild(this.app.canvas);
+
+    // App ticker is always running — it's just the render loop.
+    // Battle logic gets its own ticker, created on demand.
     this.startBattle();
   }
 
@@ -54,22 +58,49 @@ export class GameRenderer {
     const simulator = new BattleSimulator(triangleState, squareState, Date.now());
     const triSprite = new ShapeSprite(triangleState);
     const sqSprite  = new ShapeSprite(squareState);
+
     const hud = new HUD(arenaX, arenaY, arenaW, arenaH, () => {
-    // Phase 2 will put ticker start logic here
+      this.runBattle(simulator, triSprite, sqSprite, hud);
     });
 
     this.app.stage.addChild(border, triSprite.container, sqSprite.container, hud.container);
 
-    this.app.ticker.add(() => {
+    // Paint first frame so HP shows before the fight starts
+    const state = simulator.getState();  // read-only peek, no tick advance
+    const tri = state.shapes.find(s => s.id === 'tri')!;
+    const sq  = state.shapes.find(s => s.id === 'sq')!;
+    hud.update(tri.currentHp, tri.stats.hp, sq.currentHp, sq.stats.hp, state.status);
+  }
+
+  /**
+   * Creates a dedicated battle ticker. Runs independently of the app render loop.
+   * Starts when FIGHT is pressed, stops itself when the battle ends.
+   */
+  private runBattle(
+    simulator: BattleSimulator,
+    triSprite: ShapeSprite,
+    sqSprite: ShapeSprite,
+    hud: HUD
+  ) {
+    // Safety: if a battle ticker already exists, destroy it first
+    if (this.battleTicker) {
+      this.battleTicker.destroy();
+      this.battleTicker = null;
+    }
+
+    this.battleTicker = new PIXI.Ticker();
+
+    this.battleTicker.add(() => {
       const state = simulator.update();
       const tri = state.shapes.find(s => s.id === 'tri')!;
       const sq  = state.shapes.find(s => s.id === 'sq')!;
-
       hud.update(tri.currentHp, tri.stats.hp, sq.currentHp, sq.stats.hp, state.status);
 
       if (state.status !== 'running') {
-        this.app.ticker.stop();
+        this.battleTicker!.stop();
       }
     });
+
+    this.battleTicker.start();
   }
 }

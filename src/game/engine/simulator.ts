@@ -17,6 +17,9 @@ export class BattleSimulator {
   }
 
   // The main loop: Processes one "tick" of time
+  public getState(): BattleState {
+  return { ...this.state };
+  }
   public update(): BattleState {
     // 1. Clear events from the previous tick
     this.state.events = [];
